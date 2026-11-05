@@ -7,10 +7,10 @@ repositories {
 }
 
 dependencies {
-    compileOnly("net.portswigger.burp.extensions:montoya-api:2026.4")
+    compileOnly("net.portswigger.burp.extensions:montoya-api:2026.7")
     implementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
 
-    testImplementation("net.portswigger.burp.extensions:montoya-api:2026.4")
+    testImplementation("net.portswigger.burp.extensions:montoya-api:2026.7")
     testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

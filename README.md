@@ -2,6 +2,54 @@
 
 This project was created by PortSwigger to help you quickly start developing extensions in Java.
 
+## Wallety Web3 JSON-RPC implementation
+
+[Extension.java](src/main/java/Extension.java) registers a Montoya
+`ProxyRequestHandler` for JSON-RPC 2.0 requests passing through Burp Proxy.
+It processes `eth_call` and `eth_sendRawTransaction` immediately before
+forwarding, including matching entries in JSON-RPC batches. Other Burp tools,
+such as Repeater and Scanner, require a separate `HttpHandler` registration.
+
+The hooks initially leave every payload unchanged. Customize these methods:
+
+* `tamperCall(ObjectNode transaction)` receives `params[0]` and can modify
+  hexadecimal calldata in `data` or `input`, or transaction address fields.
+* `tamperRawTransaction(String signedTransactionHex)` receives the entire
+  signed transaction string in `params[0]`. Changing its encoded bytes can
+  invalidate the signature or change the recovered sender. Decode, modify,
+  and re-sign with an authorized test key when testing a valid modified
+  transaction. No transaction signing or key handling is built in.
+
+`tamperWeb3Payload(String jsonBody)` is the standalone JSON helper. It preserves
+unchanged input verbatim and rolls back the whole body if parsing or a hook
+fails. Changed bodies are serialized as JSON, encoded as UTF-8, and applied
+using Montoya's `withBody(ByteArray)` to update Content-Length automatically.
+
+Each targeted RPC produces one escaped JSON record in the extension's Output
+tab with its UTC timestamp, HTTP message ID, URL, RPC ID, batch index, method,
+original and final parameters, and modification status. Records describe the
+request prepared for forwarding; they do not assert node acceptance or a
+confirmed vulnerability. Parameter values are recorded in full, so treat
+exported logs as captured request data. Parse/preparation failures produce
+rate-limited error records and preserve the original request.
+
+Processing is bounded to 1 MiB per body, 256 entries per batch, and 64 levels
+of JSON nesting. Empty, malformed, duplicate-key, or trailing-token JSON is
+passed through unchanged. Compressed bodies, any Transfer-Encoding framing,
+invalid UTF-8, and unsupported parameter shapes are also passed through.
+These are deliberate processing limits, adjustable in the implementation.
+
+Build and test with a Java 21 JDK:
+
+```bash
+./gradlew test jar
+```
+
+Load `build/libs/extension-template-project.jar` through **Extensions >
+Installed > Add**. Jackson is bundled; Montoya is supplied by Burp. The unit
+tests exercise payload behavior outside Burp; a live Burp load/forwarding
+check remains necessary for runtime validation.
+
 ## Contents
 * [Before you start](#before-you-start)
 * [Writing your extension](#writing-your-extension)

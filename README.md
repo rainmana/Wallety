@@ -2,44 +2,45 @@
 
 This project was created by PortSwigger to help you quickly start developing extensions in Java.
 
-## Wallety Web3 JSON-RPC implementation
+## Wallety: Web3 JSON-RPC for Burp
 
-[Extension.java](src/main/java/Extension.java) registers a Montoya
-`ProxyRequestHandler` for JSON-RPC 2.0 requests passing through Burp Proxy.
-It processes `eth_call` and `eth_sendRawTransaction` immediately before
-forwarding, including matching entries in JSON-RPC batches. Other Burp tools,
-such as Repeater and Scanner, require a separate `HttpHandler` registration.
+Wallety makes Ethereum JSON-RPC traffic readable inside Burp. It registers a
+Montoya `HttpHandler`, so Proxy, Repeater, Intruder, and Scanner traffic are
+all covered.
 
-The hooks initially leave every payload unchanged. Customize these methods:
+**History notes and highlights.** Every JSON-RPC 2.0 request gets a note in
+the Proxy history, e.g. `eth_call transfer → 0x1234…5678` or
+`batch[4]: eth_call eth_blockNumberx3`. Requests that send or sign
+(`eth_sendRawTransaction`, `eth_sendTransaction`, `personal_sign`,
+`eth_signTypedData_v4`, ...) are highlighted orange. Existing user notes and
+highlights are never overwritten.
 
-* `tamperCall(ObjectNode transaction)` receives `params[0]` and can modify
-  hexadecimal calldata in `data` or `input`, or transaction address fields.
-* `tamperRawTransaction(String signedTransactionHex)` receives the entire
-  signed transaction string in `params[0]`. Changing its encoded bytes can
-  invalidate the signature or change the recovered sender. Decode, modify,
-  and re-sign with an authorized test key when testing a valid modified
-  transaction. No transaction signing or key handling is built in.
+**Web3 editor tab.** Any request whose body is a JSON-RPC 2.0 request or batch
+gets a read-only "Web3" tab in the message editor showing method, id, `to`,
+`from`, `value` (in wei and ether), block tag, and the ABI-decoded calldata:
+function selector, matched signature, and each argument including dynamic
+types, arrays, and tuples. Unknown selectors show raw 32-byte words. Raw
+transactions currently show only their length and envelope type (legacy,
+EIP-1559, EIP-4844, EIP-7702); RLP decoding is not yet implemented.
 
-`tamperWeb3Payload(String jsonBody)` is the standalone JSON helper. It preserves
-unchanged input verbatim and rolls back the whole body if parsing or a hook
-fails. Changed bodies are serialized as JSON, encoded as UTF-8, and applied
-using Montoya's `withBody(ByteArray)` to update Content-Length automatically.
+**Signatures.** [selectors.txt](src/main/resources/selectors.txt) bundles
+common ERC-20/721/1155, proxy, multicall, Uniswap, Permit2, Safe, and
+ERC-4337 signatures; selectors are computed with a built-in Keccak-256 at
+load, so the tool works offline. Add project-specific signatures under
+**Settings > Extensions > Wallety**, space-separated, e.g.
+`swap(address,uint256) claim(uint256[])`.
 
-Each targeted RPC produces one escaped JSON record in the extension's Output
-tab with its UTC timestamp, HTTP message ID, URL, RPC ID, batch index, method,
-original and final parameters, and modification status. Records describe the
-request prepared for forwarding; they do not assert node acceptance or a
-confirmed vulnerability. Parameter values are recorded in full, so treat
-exported logs as captured request data. Parse/preparation failures produce
-rate-limited error records and preserve the original request.
+**Tamper hooks.** [Extension.java](src/main/java/Extension.java) still carries
+two no-op hooks on the send path, `tamperCall(ObjectNode)` and
+`tamperRawTransaction(String)`, and logs one JSON record per targeted RPC to
+the extension Output tab. They predate the decoder and will likely be replaced
+by an editable decoded view; Repeater already covers manual tampering.
 
 Processing is bounded to 1 MiB per body, 256 entries per batch, and 64 levels
-of JSON nesting. Empty, malformed, duplicate-key, or trailing-token JSON is
-passed through unchanged. Compressed bodies, any Transfer-Encoding framing,
-invalid UTF-8, and unsupported parameter shapes are also passed through.
-These are deliberate processing limits, adjustable in the implementation.
+of JSON nesting. Compressed bodies, any Transfer-Encoding framing, invalid
+UTF-8, and malformed JSON are passed through untouched and get no note or tab.
 
-Build and test with a Java 21 JDK:
+Build and test (Gradle picks up a local JDK 21 via the toolchain setting):
 
 ```bash
 ./gradlew test jar
@@ -47,8 +48,8 @@ Build and test with a Java 21 JDK:
 
 Load `build/libs/extension-template-project.jar` through **Extensions >
 Installed > Add**. Jackson is bundled; Montoya is supplied by Burp. The unit
-tests exercise payload behavior outside Burp; a live Burp load/forwarding
-check remains necessary for runtime validation.
+tests cover hashing, ABI decoding, and summaries outside Burp; a live Burp
+load remains necessary to verify the tab and history annotations.
 
 ## Contents
 * [Before you start](#before-you-start)

@@ -19,9 +19,16 @@ highlights are never overwritten.
 gets a read-only "Web3" tab in the message editor showing method, id, `to`,
 `from`, `value` (in wei and ether), block tag, and the ABI-decoded calldata:
 function selector, matched signature, and each argument including dynamic
-types, arrays, and tuples. Unknown selectors show raw 32-byte words. Raw
-transactions currently show only their length and envelope type (legacy,
-EIP-1559, EIP-4844, EIP-7702); RLP decoding is not yet implemented.
+types, arrays, and tuples. Unknown selectors show raw 32-byte words.
+
+**Raw transactions.** `eth_sendRawTransaction` payloads are RLP-decoded for
+legacy and typed (EIP-2930, 1559, 4844, 7702) transactions: chain id, nonce,
+gas fields in gwei, `to`, `value`, access list, blob hashes or set-code
+authorizations, signature values, and the calldata decoded through the same
+ABI path. The history note shows the decoded function and target, e.g.
+`eth_sendRawTransaction transfer → 0x3535…3535`. Sender recovery from the
+signature is not implemented (it needs secp256k1); the `from` address is
+therefore not shown.
 
 **Signatures.** [selectors.txt](src/main/resources/selectors.txt) bundles
 common ERC-20/721/1155, proxy, multicall, Uniswap, Permit2, Safe, and

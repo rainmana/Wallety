@@ -79,6 +79,16 @@ final class Abi {
         return out;
     }
 
+    /** Short label for a describeCalldata result: function name, "0xselector" if unknown, null if no calldata. */
+    static String callLabel(List<String> lines) {
+        String head = lines.isEmpty() ? "" : lines.get(0);
+        if (!head.startsWith("selector 0x")) {
+            return null;
+        }
+        String rest = head.substring("selector 0x".length() + 8).strip();
+        return rest.startsWith("(unknown") ? head.substring(9, 19) : rest.substring(0, rest.indexOf('('));
+    }
+
     static boolean looksLikeSignature(String s) {
         int open = s.indexOf('(');
         return open > 0 && s.endsWith(")") && s.chars().allMatch(c -> c < 128 && !Character.isWhitespace(c));

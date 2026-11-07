@@ -38,4 +38,4 @@ The built JAR file will be in `build/libs/` and can be loaded directly into Burp
 
 ## Current State
 
-Decoding works for `eth_call`-style transaction objects (static, dynamic, array, and tuple ABI types). Raw signed transactions show only length and envelope type; RLP decoding, sender recovery, response decoding, and an editable decoded view are not implemented. The `tamperCall`/`tamperRawTransaction` hooks are no-ops. Unit tests run outside Burp; the tab and annotations need a live Burp load to verify.
+Decoding works for `eth_call`-style transaction objects (static, dynamic, array, and tuple ABI types) and for signed raw transactions via `src/main/java/Rlp.java` (legacy and types 1-4, calldata through the ABI decoder). Sender recovery (needs secp256k1), response decoding, and an editable decoded view are not implemented. The `tamperCall`/`tamperRawTransaction` hooks are no-ops. Unit tests run outside Burp; the tab and annotations need a live Burp load to verify.

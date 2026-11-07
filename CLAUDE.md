@@ -2,14 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-This is a Burp Suite Extension template project using the Montoya API (currently a minimal starter project).
+Wallety is a Burp Suite extension (Montoya API) that decodes Ethereum JSON-RPC traffic: history notes/highlights and a read-only "Web3" editor tab with ABI-decoded calldata.
 
 ## Architecture
 
-- **Main Entry Point**: `src/main/java/Extension.java` - implements `BurpExtension` interface
-- **Build System**: Gradle with Kotlin DSL, Java 21 compatibility
-- **Dependencies**: Montoya API 2025.5 (compile-only), no runtime dependencies
-- **Extension Pattern**: Single-class extension that initializes through `initialize(MontoyaApi montoyaApi)` method
+- **Main Entry Point**: `src/main/java/Extension.java` - `BurpExtension` + `HttpHandler`; registers the settings panel, the "Web3" request editor tab, and no-op tamper hooks
+- `src/main/java/Web3Summary.java` - JSON-RPC body -> history note, highlight, and detail text (pure, testable)
+- `src/main/java/Abi.java` - selector table (bundled `src/main/resources/selectors.txt` + user setting) and ABI calldata decoder
+- `src/main/java/Keccak.java` - Keccak-256 (the JDK only has SHA3-256, which pads differently)
+- **Build System**: Gradle with Kotlin DSL, JDK 21 via toolchain
+- **Dependencies**: Montoya API (compile-only), Jackson databind (bundled into the JAR), JUnit 5 for tests
 
 ## Key Development Commands
 
@@ -36,4 +38,4 @@ The built JAR file will be in `build/libs/` and can be loaded directly into Burp
 
 ## Current State
 
-This is a template project with minimal functionality. The main extension class currently only sets the extension name to "My Extension" and contains a TODO for actual implementation.
+Decoding works for `eth_call`-style transaction objects (static, dynamic, array, and tuple ABI types). Raw signed transactions show only length and envelope type; RLP decoding, sender recovery, response decoding, and an editable decoded view are not implemented. The `tamperCall`/`tamperRawTransaction` hooks are no-ops. Unit tests run outside Burp; the tab and annotations need a live Burp load to verify.

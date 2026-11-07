@@ -1,11 +1,24 @@
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
+import burp.api.montoya.core.Annotations;
 import burp.api.montoya.core.ByteArray;
+import burp.api.montoya.core.HighlightColor;
+import burp.api.montoya.http.handler.HttpHandler;
+import burp.api.montoya.http.handler.HttpRequestToBeSent;
+import burp.api.montoya.http.handler.HttpResponseReceived;
+import burp.api.montoya.http.handler.RequestToBeSentAction;
+import burp.api.montoya.http.handler.ResponseReceivedAction;
+import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
-import burp.api.montoya.proxy.http.InterceptedRequest;
-import burp.api.montoya.proxy.http.ProxyRequestHandler;
-import burp.api.montoya.proxy.http.ProxyRequestReceivedAction;
-import burp.api.montoya.proxy.http.ProxyRequestToBeSentAction;
+import burp.api.montoya.ui.Selection;
+import burp.api.montoya.ui.editor.EditorOptions;
+import burp.api.montoya.ui.editor.RawEditor;
+import burp.api.montoya.ui.editor.extension.EditorCreationContext;
+import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpRequestEditor;
+import burp.api.montoya.ui.settings.SettingsPanelBuilder;
+import burp.api.montoya.ui.settings.SettingsPanelPersistence;
+import burp.api.montoya.ui.settings.SettingsPanelSetting;
+import burp.api.montoya.ui.settings.SettingsPanelWithData;
 
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadConstraints;
@@ -17,22 +30,27 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
+import java.awt.Component;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Ethereum JSON-RPC hooks for traffic passing through Burp Proxy.
- * No network calls, key handling, transaction signing, or active fuzzing occur
- * until you customize the two protected hooks below.
+ * Ethereum JSON-RPC visibility for Burp: history notes and highlights, a
+ * decoded "Web3" editor tab, and no-op tamper hooks on the send path.
+ * No network calls, key handling, or transaction signing occur.
  */
-public class Extension implements BurpExtension, ProxyRequestHandler {
+public class Extension implements BurpExtension, HttpHandler {
+    static final String SIGNATURES_SETTING = "Extra function signatures";
+
     // Bound parser work on the Proxy thread. Raise these for larger RPC batches.
     private static final int MAX_BODY_BYTES = 1024 * 1024;
     private static final int MAX_BATCH_ENTRIES = 256;
@@ -53,46 +71,59 @@ public class Extension implements BurpExtension, ProxyRequestHandler {
 
     private final AtomicLong nextErrorLogAt = new AtomicLong();
     private volatile MontoyaApi montoya;
+    private volatile SettingsPanelWithData settings;
 
     @Override
     public void initialize(MontoyaApi montoyaApi) {
         montoya = Objects.requireNonNull(montoyaApi, "Montoya API");
-        montoya.extension().setName("Wallety - Web3 JSON-RPC Tampering");
-        montoya.proxy().registerRequestHandler(this);
-        logOutput("{\"event\":\"web3_extension_loaded\",\"coverage\":\"Burp Proxy\","
+        montoya.extension().setName("Wallety - Web3 JSON-RPC");
+        settings = SettingsPanelBuilder.settingsPanel()
+                .withPersistence(SettingsPanelPersistence.USER_SETTINGS)
+                .withTitle("Wallety")
+                .withDescription("Function signatures to decode in addition to the bundled list, "
+                        + "separated by spaces, e.g. swap(address,uint256) claim(uint256[])")
+                .withKeywords("web3", "ethereum", "abi")
+                .withSettings(SettingsPanelSetting.stringSetting(SIGNATURES_SETTING, ""))
+                .build();
+        montoya.userInterface().registerSettingsPanel(settings);
+        montoya.userInterface().registerHttpRequestEditorProvider(this::newEditor);
+        montoya.http().registerHttpHandler(this);
+        // No threads or sockets to release; Burp drops registrations itself.
+        montoya.extension().registerUnloadingHandler(() -> logOutput("{\"event\":\"web3_extension_unloaded\"}"));
+        logOutput("{\"event\":\"web3_extension_loaded\",\"coverage\":\"all Burp tools\","
                 + "\"tampering\":\"no-op until hooks are customized\"}");
     }
 
-    @Override
-    public ProxyRequestReceivedAction handleRequestReceived(InterceptedRequest request) {
-        // Preserve Burp's interception rules; mutate once, after manual edits.
-        return ProxyRequestReceivedAction.continueWith(request, request.annotations());
+    Map<String, String> selectors() {
+        SettingsPanelWithData panel = settings;
+        String extra = null;
+        if (panel != null) {
+            try {
+                extra = panel.getString(SIGNATURES_SETTING);
+            } catch (RuntimeException ignored) {
+                // Settings unavailable: fall back to the bundled table.
+            }
+        }
+        return Abi.table(extra);
     }
 
     @Override
-    public ProxyRequestToBeSentAction handleRequestToBeSent(InterceptedRequest request) {
+    public RequestToBeSentAction handleHttpRequestToBeSent(HttpRequestToBeSent request) {
         HttpRequest outgoing = request;
+        String finalBody = null;
         List<ObjectNode> reports = new ArrayList<>();
         try {
-            ByteArray body = request.body();
-            // Encoded or chunk-framed bodies need a separate decoding pipeline.
-            if (body == null || body.length() == 0 || body.length() > MAX_BODY_BYTES
-                    || hasEncodedBody(request)) {
-                return ProxyRequestToBeSentAction.continueWith(request, request.annotations());
+            String original = bodyText(request);
+            if (original == null) {
+                return RequestToBeSentAction.continueWith(request, request.annotations());
             }
-
-            // JSON-RPC over HTTP is UTF-8; do not use Burp's configurable charset.
-            String original = StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(body.getBytes())).toString();
-            String modified = tamperWeb3Payload(original, reports);
-            if (!original.equals(modified)) {
+            finalBody = tamperWeb3Payload(original, reports);
+            if (!original.equals(finalBody)) {
                 // Montoya updates Content-Length from the actual body bytes.
                 outgoing = request.withBody(ByteArray.byteArray(
-                        modified.getBytes(StandardCharsets.UTF_8)));
+                        finalBody.getBytes(StandardCharsets.UTF_8)));
             }
-        } catch (IOException | RuntimeException exception) {
+        } catch (RuntimeException exception) {
             reports.clear();
             logFailure("request_preparation", exception);
             outgoing = request;
@@ -100,16 +131,113 @@ public class Extension implements BurpExtension, ProxyRequestHandler {
 
         // Build the action before reporting success. An API failure must not
         // produce a log claiming that a changed body was prepared for forwarding.
-        ProxyRequestToBeSentAction action;
+        RequestToBeSentAction action;
         try {
-            action = ProxyRequestToBeSentAction.continueWith(outgoing, request.annotations());
+            action = RequestToBeSentAction.continueWith(outgoing, annotate(request.annotations(), finalBody));
         } catch (RuntimeException exception) {
             reports.clear();
             logFailure("forwarding_action", exception);
-            return ProxyRequestToBeSentAction.continueWith(request, request.annotations());
+            return RequestToBeSentAction.continueWith(request, request.annotations());
         }
         logReports(reports, request);
         return action;
+    }
+
+    @Override
+    public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived response) {
+        return ResponseReceivedAction.continueWith(response);
+    }
+
+    /** Adds a note and highlight for Web3 traffic without clobbering user-written ones. */
+    private Annotations annotate(Annotations annotations, String body) {
+        Web3Summary summary = body == null ? null : Web3Summary.describe(body, selectors());
+        if (summary == null) {
+            return annotations;
+        }
+        if (!annotations.hasNotes()) {
+            annotations = annotations.withNotes(summary.note);
+        }
+        if (!annotations.hasHighlightColor() && summary.highlight != HighlightColor.NONE) {
+            annotations = annotations.withHighlightColor(summary.highlight);
+        }
+        return annotations;
+    }
+
+    /** Strict UTF-8 body text, or null when absent, too large, encoded, or not UTF-8. */
+    static String bodyText(HttpRequest request) {
+        ByteArray body = request.body();
+        // Encoded or chunk-framed bodies need a separate decoding pipeline.
+        if (body == null || body.length() == 0 || body.length() > MAX_BODY_BYTES
+                || hasEncodedBody(request)) {
+            return null;
+        }
+        try {
+            // JSON-RPC over HTTP is UTF-8; do not use Burp's configurable charset.
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(body.getBytes())).toString();
+        } catch (CharacterCodingException exception) {
+            return null;
+        }
+    }
+
+    private ExtensionProvidedHttpRequestEditor newEditor(EditorCreationContext context) {
+        return new DecodedTab();
+    }
+
+    /** Read-only "Web3" tab in every request editor. */
+    private final class DecodedTab implements ExtensionProvidedHttpRequestEditor {
+        private final RawEditor editor = montoya.userInterface().createRawEditor(EditorOptions.READ_ONLY);
+        private HttpRequestResponse current;
+
+        @Override
+        public HttpRequest getRequest() {
+            return current == null ? null : current.request();
+        }
+
+        @Override
+        public void setRequestResponse(HttpRequestResponse requestResponse) {
+            current = requestResponse;
+            Web3Summary summary = summarize(requestResponse);
+            editor.setContents(ByteArray.byteArray(
+                    (summary == null ? "" : summary.detail).getBytes(StandardCharsets.UTF_8)));
+        }
+
+        @Override
+        public boolean isEnabledFor(HttpRequestResponse requestResponse) {
+            return summarize(requestResponse) != null;
+        }
+
+        private Web3Summary summarize(HttpRequestResponse requestResponse) {
+            try {
+                HttpRequest request = requestResponse == null ? null : requestResponse.request();
+                return request == null ? null : Web3Summary.describe(bodyText(request), selectors());
+            } catch (RuntimeException exception) {
+                logFailure("editor_tab", exception);
+                return null;
+            }
+        }
+
+        @Override
+        public String caption() {
+            return "Web3";
+        }
+
+        @Override
+        public Component uiComponent() {
+            return editor.uiComponent();
+        }
+
+        @Override
+        public Selection selectedData() {
+            return editor.selection().orElse(null);
+        }
+
+        @Override
+        public boolean isModified() {
+            return false;
+        }
     }
 
     /**
@@ -279,7 +407,7 @@ public class Extension implements BurpExtension, ProxyRequestHandler {
         return false;
     }
 
-    private void logReports(List<ObjectNode> reports, InterceptedRequest request) {
+    private void logReports(List<ObjectNode> reports, HttpRequestToBeSent request) {
         for (ObjectNode report : reports) {
             try {
                 report.put("timestamp_utc", Instant.now().toString());

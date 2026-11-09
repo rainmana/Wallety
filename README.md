@@ -21,6 +21,14 @@ gets a read-only "Web3" tab in the message editor showing method, id, `to`,
 function selector, matched signature, and each argument including dynamic
 types, arrays, and tuples. Unknown selectors show raw 32-byte words.
 
+**Responses.** The response editor gets a "Web3" tab too. Each JSON-RPC result
+is matched to its request by id; `eth_call` results are decoded with the
+called function's return types (`balanceOf` → `[0] uint256  1000`), quantity
+results are shown in decimal (balances also in ether), and error `data` is
+decoded as revert data (`Error(string)`, `Panic(uint256)`, or any custom error
+whose signature is in the table). Compressed responses are not decoded; turn
+off response compression in the Proxy options or use Repeater.
+
 **Raw transactions.** `eth_sendRawTransaction` payloads are RLP-decoded for
 legacy and typed (EIP-2930, 1559, 4844, 7702) transactions: chain id, nonce,
 gas fields in gwei, `to`, `value`, access list, blob hashes or set-code
@@ -35,7 +43,9 @@ common ERC-20/721/1155, proxy, multicall, Uniswap, Permit2, Safe, and
 ERC-4337 signatures; selectors are computed with a built-in Keccak-256 at
 load, so the tool works offline. Add project-specific signatures under
 **Settings > Extensions > Wallety**, space-separated, e.g.
-`swap(address,uint256) claim(uint256[])`.
+`swap(address,uint256) claim(uint256[])`. Append return types as
+`name(args)(types)`, e.g. `getReserves()(uint112,uint112,uint32)`, to decode
+`eth_call` results.
 
 **Tamper hooks.** [Extension.java](src/main/java/Extension.java) still carries
 two no-op hooks on the send path, `tamperCall(ObjectNode)` and

@@ -30,7 +30,7 @@ final class Abi {
         Map<String, String> table = new HashMap<>(BUILTIN);
         for (String signature : key.split("[\\s;]+")) {
             if (looksLikeSignature(signature)) {
-                table.put(Keccak.selector(signature), signature);
+                table.put(Keccak.selector(argsPart(signature)), signature);
             }
         }
         cached = Map.entry(key, Map.copyOf(table));
@@ -62,21 +62,67 @@ final class Abi {
             rawWords(data, out);
             return out;
         }
-        out.add("selector 0x" + selector + "  " + signature);
+        String args = argsPart(signature);
+        out.add("selector 0x" + selector + "  " + args);
         try {
-            Type params = parseType(signature.substring(signature.indexOf('(')));
-            byte[] args = Arrays.copyOfRange(data, 4, data.length);
-            List<Type> components = params.components;
-            int pos = 0;
-            for (int i = 0; i < components.size(); i++) {
-                render(components.get(i), args, 0, pos, "[" + i + "]", "  ", out);
-                pos += headSize(components.get(i));
-            }
+            renderTuple(0, parseType(args.substring(args.indexOf('('))).components,
+                    Arrays.copyOfRange(data, 4, data.length), "  ", out);
         } catch (RuntimeException e) {
-            out.add("  (arguments do not decode as " + signature + ")");
+            out.add("  (arguments do not decode as " + args + ")");
             rawWords(data, out);
         }
         return out;
+    }
+
+    /** Lines for an eth_call result given the request's signature (may be null or lack return types). */
+    static List<String> describeReturn(String hex, String signature) {
+        List<String> out = new ArrayList<>();
+        byte[] data;
+        try {
+            data = fromHex(hex);
+        } catch (RuntimeException e) {
+            out.add("result: not valid hex");
+            return out;
+        }
+        String returns = signature == null ? null : returnsPart(signature);
+        if (data.length == 0) {
+            out.add("result: empty  (reverted without reason, or no contract at `to`)");
+            return out;
+        }
+        if (returns == null) {
+            out.add("result: " + data.length + " bytes" + (signature == null
+                    ? "  (unknown function; add its signature under Settings > Wallety)"
+                    : "  (no return types for " + argsPart(signature) + "; add them as name(args)(types))"));
+            rawWords(data, 0, out);
+            return out;
+        }
+        out.add("returns " + returns);
+        try {
+            renderTuple(0, parseType(returns).components, data, "  ", out);
+        } catch (RuntimeException e) {
+            out.add("  (result does not decode as " + returns + ")");
+            rawWords(data, 0, out);
+        }
+        return out;
+    }
+
+    /** "name(args)" of a signature that may carry "(returns)" after it. */
+    static String argsPart(String signature) {
+        int depth = 0;
+        for (int i = signature.indexOf('('); i >= 0 && i < signature.length(); i++) {
+            char c = signature.charAt(i);
+            depth += c == '(' ? 1 : c == ')' ? -1 : 0;
+            if (depth == 0) {
+                return signature.substring(0, i + 1);
+            }
+        }
+        return signature;
+    }
+
+    /** "(types)" after the argument list, or null when the signature has none. */
+    static String returnsPart(String signature) {
+        String rest = signature.substring(argsPart(signature).length());
+        return rest.startsWith("(") && rest.endsWith(")") ? rest : null;
     }
 
     /** Short label for a describeCalldata result: function name, "0xselector" if unknown, null if no calldata. */
@@ -111,9 +157,13 @@ final class Abi {
     }
 
     private static void rawWords(byte[] data, List<String> out) {
-        int words = (data.length - 4 + 31) / 32;
+        rawWords(data, 4, out);
+    }
+
+    private static void rawWords(byte[] data, int from, List<String> out) {
+        int words = (data.length - from + 31) / 32;
         for (int w = 0; w < Math.min(words, MAX_RAW_WORDS); w++) {
-            int start = 4 + w * 32;
+            int start = from + w * 32;
             byte[] word = Arrays.copyOfRange(data, start, Math.min(start + 32, data.length));
             out.add("  word[" + w + "] 0x" + Keccak.hex(word, word.length));
         }
@@ -328,7 +378,7 @@ final class Abi {
             while ((line = reader.readLine()) != null) {
                 line = line.strip();
                 if (looksLikeSignature(line)) {
-                    table.put(Keccak.selector(line), line);
+                    table.put(Keccak.selector(argsPart(line)), line);
                 }
             }
         } catch (java.io.IOException ignored) {

@@ -11,7 +11,7 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.20.1")
 
     testImplementation("net.portswigger.burp.extensions:montoya-api:2026.4")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.11.4")
+    testImplementation("org.junit.jupiter:junit-jupiter:6.1.3")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

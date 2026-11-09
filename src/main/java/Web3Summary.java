@@ -120,13 +120,8 @@ final class Web3Summary {
                 for (String line : lines) {
                     out.append("  ").append(line).append('\n');
                 }
-                String head = lines.get(0);
-                if (head.startsWith("selector ")) {
-                    String signature = head.substring("selector 0x".length() + 8).strip();
-                    call += " " + (signature.startsWith("(unknown") ? head.substring(9, 19) : signature.substring(0, signature.indexOf('(')));
-                } else {
-                    call += " (no calldata)";
-                }
+                String label = Abi.callLabel(lines);
+                call += " " + (label == null ? "(no calldata)" : label);
             } else {
                 out.append("  data:   none\n");
             }
@@ -134,24 +129,18 @@ final class Web3Summary {
         }
 
         if (method.equals("eth_sendRawTransaction") && first.isTextual()) {
-            String hex = first.asText();
             byte[] raw;
             try {
-                raw = Abi.fromHex(hex);
+                raw = Abi.fromHex(first.asText());
             } catch (RuntimeException e) {
-                out.append("  raw:    not valid hex\n");
+                out.append("  raw:      not valid hex\n");
                 return method;
             }
-            // ponytail: envelope type only; RLP decode and sender recovery come later.
-            String kind = raw.length == 0 ? "empty" : switch (raw[0] & 0xff) {
-                case 0x01 -> "EIP-2930 (type 1)";
-                case 0x02 -> "EIP-1559 (type 2)";
-                case 0x03 -> "EIP-4844 blob (type 3)";
-                case 0x04 -> "EIP-7702 set-code (type 4)";
-                default -> (raw[0] & 0xff) >= 0xc0 ? "legacy (RLP list)" : "unknown type 0x" + Keccak.hex(raw, 1);
-            };
-            out.append("  raw:    ").append(raw.length).append(" bytes, ").append(kind).append('\n');
-            return method + " " + kind;
+            Rlp.Described tx = Rlp.describeTransaction(raw, selectors);
+            for (String line : tx.lines) {
+                out.append("  ").append(line).append('\n');
+            }
+            return method + " " + tx.label;
         }
 
         String preview = params.isMissingNode() ? "none" : params.toString();

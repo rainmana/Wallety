@@ -130,7 +130,7 @@ class DecoderTest {
         Web3Summary multi = Web3Summary.describe(batch, TABLE);
         assertEquals("batch[4]: eth_call eth_sendRawTransaction eth_blockNumberx2", multi.note);
         assertEquals(HighlightColor.ORANGE, multi.highlight);
-        assertTrue(multi.detail.contains("[1] eth_sendRawTransaction  (id 8)\n  raw:    4 bytes, EIP-1559 (type 2)\n"));
+        assertTrue(multi.detail.contains("[1] eth_sendRawTransaction  (id 8)\n  raw:      4 bytes, EIP-1559 (type 2)\n  (does not decode as"));
         assertTrue(multi.detail.contains("[2] eth_blockNumber  (notification)\n  params: []\n"));
         assertTrue(multi.detail.contains("[3] eth_blockNumber  (id 9)\n  params: none\n"));
 

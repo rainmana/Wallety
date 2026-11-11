@@ -8,13 +8,16 @@ import burp.api.montoya.http.handler.HttpRequestToBeSent;
 import burp.api.montoya.http.handler.HttpResponseReceived;
 import burp.api.montoya.http.handler.RequestToBeSentAction;
 import burp.api.montoya.http.handler.ResponseReceivedAction;
+import burp.api.montoya.http.message.HttpMessage;
 import burp.api.montoya.http.message.HttpRequestResponse;
 import burp.api.montoya.http.message.requests.HttpRequest;
+import burp.api.montoya.http.message.responses.HttpResponse;
 import burp.api.montoya.ui.Selection;
 import burp.api.montoya.ui.editor.EditorOptions;
 import burp.api.montoya.ui.editor.RawEditor;
-import burp.api.montoya.ui.editor.extension.EditorCreationContext;
+import burp.api.montoya.ui.editor.extension.ExtensionProvidedEditor;
 import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpRequestEditor;
+import burp.api.montoya.ui.editor.extension.ExtensionProvidedHttpResponseEditor;
 import burp.api.montoya.ui.settings.SettingsPanelBuilder;
 import burp.api.montoya.ui.settings.SettingsPanelPersistence;
 import burp.api.montoya.ui.settings.SettingsPanelSetting;
@@ -86,7 +89,8 @@ public class Extension implements BurpExtension, HttpHandler {
                 .withSettings(SettingsPanelSetting.stringSetting(SIGNATURES_SETTING, ""))
                 .build();
         montoya.userInterface().registerSettingsPanel(settings);
-        montoya.userInterface().registerHttpRequestEditorProvider(this::newEditor);
+        montoya.userInterface().registerHttpRequestEditorProvider(context -> new RequestTab());
+        montoya.userInterface().registerHttpResponseEditorProvider(context -> new ResponseTab());
         montoya.http().registerHttpHandler(this);
         // No threads or sockets to release; Burp drops registrations itself.
         montoya.extension().registerUnloadingHandler(() -> logOutput("{\"event\":\"web3_extension_unloaded\"}"));
@@ -164,11 +168,11 @@ public class Extension implements BurpExtension, HttpHandler {
     }
 
     /** Strict UTF-8 body text, or null when absent, too large, encoded, or not UTF-8. */
-    static String bodyText(HttpRequest request) {
-        ByteArray body = request.body();
+    static String bodyText(HttpMessage message) {
+        ByteArray body = message == null ? null : message.body();
         // Encoded or chunk-framed bodies need a separate decoding pipeline.
         if (body == null || body.length() == 0 || body.length() > MAX_BODY_BYTES
-                || hasEncodedBody(request)) {
+                || hasEncodedBody(message)) {
             return null;
         }
         try {
@@ -182,37 +186,29 @@ public class Extension implements BurpExtension, HttpHandler {
         }
     }
 
-    private ExtensionProvidedHttpRequestEditor newEditor(EditorCreationContext context) {
-        return new DecodedTab();
-    }
+    /** Read-only "Web3" tab shared by the request and response editors. */
+    private abstract class Tab implements ExtensionProvidedEditor {
+        final RawEditor editor = montoya.userInterface().createRawEditor(EditorOptions.READ_ONLY);
+        HttpRequestResponse current;
 
-    /** Read-only "Web3" tab in every request editor. */
-    private final class DecodedTab implements ExtensionProvidedHttpRequestEditor {
-        private final RawEditor editor = montoya.userInterface().createRawEditor(EditorOptions.READ_ONLY);
-        private HttpRequestResponse current;
-
-        @Override
-        public HttpRequest getRequest() {
-            return current == null ? null : current.request();
-        }
+        /** Decoded text for the message, or null when the tab should be hidden. */
+        abstract String decode(HttpRequestResponse requestResponse);
 
         @Override
         public void setRequestResponse(HttpRequestResponse requestResponse) {
             current = requestResponse;
-            Web3Summary summary = summarize(requestResponse);
-            editor.setContents(ByteArray.byteArray(
-                    (summary == null ? "" : summary.detail).getBytes(StandardCharsets.UTF_8)));
+            String text = text(requestResponse);
+            editor.setContents(ByteArray.byteArray((text == null ? "" : text).getBytes(StandardCharsets.UTF_8)));
         }
 
         @Override
         public boolean isEnabledFor(HttpRequestResponse requestResponse) {
-            return summarize(requestResponse) != null;
+            return text(requestResponse) != null;
         }
 
-        private Web3Summary summarize(HttpRequestResponse requestResponse) {
+        private String text(HttpRequestResponse requestResponse) {
             try {
-                HttpRequest request = requestResponse == null ? null : requestResponse.request();
-                return request == null ? null : Web3Summary.describe(bodyText(request), selectors());
+                return requestResponse == null ? null : decode(requestResponse);
             } catch (RuntimeException exception) {
                 logFailure("editor_tab", exception);
                 return null;
@@ -237,6 +233,32 @@ public class Extension implements BurpExtension, HttpHandler {
         @Override
         public boolean isModified() {
             return false;
+        }
+    }
+
+    private final class RequestTab extends Tab implements ExtensionProvidedHttpRequestEditor {
+        @Override
+        String decode(HttpRequestResponse requestResponse) {
+            Web3Summary summary = Web3Summary.describe(bodyText(requestResponse.request()), selectors());
+            return summary == null ? null : summary.detail;
+        }
+
+        @Override
+        public HttpRequest getRequest() {
+            return current == null ? null : current.request();
+        }
+    }
+
+    private final class ResponseTab extends Tab implements ExtensionProvidedHttpResponseEditor {
+        @Override
+        String decode(HttpRequestResponse requestResponse) {
+            return Web3Summary.describeResponse(bodyText(requestResponse.request()),
+                    bodyText(requestResponse.response()), selectors());
+        }
+
+        @Override
+        public HttpResponse getResponse() {
+            return current == null ? null : current.response();
         }
     }
 
@@ -391,11 +413,11 @@ public class Extension implements BurpExtension, HttpHandler {
         return true; // "0x" is valid empty calldata; this is not RLP validation.
     }
 
-    private static boolean hasEncodedBody(HttpRequest request) {
-        if (request.hasHeader("Transfer-Encoding")) {
+    private static boolean hasEncodedBody(HttpMessage message) {
+        if (message.hasHeader("Transfer-Encoding")) {
             return true;
         }
-        String encoding = request.headerValue("Content-Encoding");
+        String encoding = message.headerValue("Content-Encoding");
         if (encoding == null || encoding.isBlank()) {
             return false;
         }

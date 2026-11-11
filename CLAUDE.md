@@ -6,9 +6,9 @@ Wallety is a Burp Suite extension (Montoya API) that decodes Ethereum JSON-RPC t
 
 ## Architecture
 
-- **Main Entry Point**: `src/main/java/Extension.java` - `BurpExtension` + `HttpHandler`; registers the settings panel, the "Web3" request editor tab, and no-op tamper hooks
-- `src/main/java/Web3Summary.java` - JSON-RPC body -> history note, highlight, and detail text (pure, testable)
-- `src/main/java/Abi.java` - selector table (bundled `src/main/resources/selectors.txt` + user setting) and ABI calldata decoder
+- **Main Entry Point**: `src/main/java/Extension.java` - `BurpExtension` + `HttpHandler`; registers the settings panel, the "Web3" request and response editor tabs, and no-op tamper hooks
+- `src/main/java/Web3Summary.java` - JSON-RPC body -> history note, highlight, and detail text; response body + request body -> response detail (pure, testable)
+- `src/main/java/Abi.java` - selector table (bundled `src/main/resources/selectors.txt` + user setting, `name(args)(returns)` format) and ABI calldata/return decoder
 - `src/main/java/Keccak.java` - Keccak-256 (the JDK only has SHA3-256, which pads differently)
 - **Build System**: Gradle with Kotlin DSL, JDK 21 via toolchain
 - **Dependencies**: Montoya API (compile-only), Jackson databind (bundled into the JAR), JUnit 5 for tests
@@ -38,4 +38,4 @@ The built JAR file will be in `build/libs/` and can be loaded directly into Burp
 
 ## Current State
 
-Decoding works for `eth_call`-style transaction objects (static, dynamic, array, and tuple ABI types) and for signed raw transactions via `src/main/java/Rlp.java` (legacy and types 1-4, calldata through the ABI decoder). Sender recovery (needs secp256k1), response decoding, and an editable decoded view are not implemented. The `tamperCall`/`tamperRawTransaction` hooks are no-ops. Unit tests run outside Burp; the tab and annotations need a live Burp load to verify.
+Decoding works for `eth_call`-style transaction objects (static, dynamic, array, and tuple ABI types) and for signed raw transactions via `src/main/java/Rlp.java` (legacy and types 1-4, calldata through the ABI decoder). Responses decode in a response-side Web3 tab: `eth_call` results via the signature's return types, errors via revert-data selectors. Sender recovery (needs secp256k1) and an editable decoded view are not implemented. The `tamperCall`/`tamperRawTransaction` hooks are no-ops. Unit tests run outside Burp; the tab and annotations need a live Burp load to verify.

@@ -30,7 +30,7 @@ class DecoderTest {
 
     @Test
     void bundledTableResolvesCommonSelectorsAndExtrasAreAdded() {
-        assertEquals("transfer(address,uint256)", TABLE.get("a9059cbb"));
+        assertEquals("transfer(address,uint256)(bool)", TABLE.get("a9059cbb"));
         assertEquals("setApprovalForAll(address,bool)", TABLE.get("a22cb465"));
         Map<String, String> extra = Abi.table("  frob(uint256,bool)\nnonsense  ; foo(bytes32)");
         assertEquals("frob(uint256,bool)", extra.get(Keccak.selector("frob(uint256,bool)")));

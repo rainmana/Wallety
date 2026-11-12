@@ -1,3 +1,4 @@
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -107,6 +108,46 @@ final class Rlp {
         return new Item(null, items);
     }
 
+    /** Canonical RLP encoding of an item; the inverse of decode. */
+    static byte[] encode(Item item) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        if (!item.isList()) {
+            if (item.bytes.length == 1 && (item.bytes[0] & 0xff) < 0x80) {
+                return item.bytes;
+            }
+            out.writeBytes(lengthPrefix(0x80, item.bytes.length));
+            out.writeBytes(item.bytes);
+            return out.toByteArray();
+        }
+        ByteArrayOutputStream payload = new ByteArrayOutputStream();
+        for (Item child : item.list) {
+            payload.writeBytes(encode(child));
+        }
+        out.writeBytes(lengthPrefix(0xc0, payload.size()));
+        out.writeBytes(payload.toByteArray());
+        return out.toByteArray();
+    }
+
+    static Item uint(BigInteger value) {
+        byte[] bytes = value.toByteArray();
+        int skip = 0;
+        while (skip < bytes.length && bytes[skip] == 0) {
+            skip++;
+        }
+        return new Item(Arrays.copyOfRange(bytes, skip, bytes.length), null);
+    }
+
+    private static byte[] lengthPrefix(int base, int length) {
+        if (length <= 55) {
+            return new byte[]{(byte) (base + length)};
+        }
+        byte[] lengthBytes = uint(BigInteger.valueOf(length)).bytes;
+        byte[] out = new byte[1 + lengthBytes.length];
+        out[0] = (byte) (base + 55 + lengthBytes.length);
+        System.arraycopy(lengthBytes, 0, out, 1, lengthBytes.length);
+        return out;
+    }
+
     static final class Described {
         final List<String> lines;
         final String label;
@@ -162,6 +203,9 @@ final class Rlp {
                 lines.add("(expected " + layout.length + " fields, found " + fields.size() + ")");
             }
             String label = renderFields(layout, fields, selectors, lines);
+            if (fields.size() == layout.length) {
+                lines.add(1, "from:     " + recoverSender(first, fields));
+            }
             return new Described(lines, label);
         } catch (RuntimeException e) {
             lines.add("(does not decode as " + kind + ": " + e.getMessage() + ")");
@@ -228,6 +272,55 @@ final class Rlp {
         return call + (to == null ? "" : " → " + Web3Summary.shorten(to));
     }
 
+    /** Sender address recovered from the signature, or a parenthesised reason. Never throws. */
+    static String recoverSender(int typeByte, List<Item> fields) {
+        try {
+            int n = fields.size();
+            BigInteger r = fields.get(n - 2).uint();
+            BigInteger s = fields.get(n - 1).uint();
+            BigInteger v = fields.get(n - 3).uint();
+            List<Item> unsigned = new ArrayList<>(fields.subList(0, n - 3));
+            int recId;
+            byte[] preimage;
+            if (typeByte >= 0xc0) {
+                // Legacy: v = 27/28, or chainId*2 + 35/36 (EIP-155, which also signs over [chainId, 0, 0]).
+                if (v.compareTo(BigInteger.valueOf(35)) >= 0) {
+                    BigInteger chainId = v.subtract(BigInteger.valueOf(35)).shiftRight(1);
+                    recId = v.subtract(BigInteger.valueOf(35)).testBit(0) ? 1 : 0;
+                    unsigned.add(uint(chainId));
+                    unsigned.add(uint(BigInteger.ZERO));
+                    unsigned.add(uint(BigInteger.ZERO));
+                } else {
+                    recId = v.subtract(BigInteger.valueOf(27)).intValueExact();
+                }
+                preimage = encode(new Item(null, unsigned));
+            } else {
+                recId = v.intValueExact();
+                byte[] body = encode(new Item(null, unsigned));
+                preimage = new byte[body.length + 1];
+                preimage[0] = (byte) typeByte;
+                System.arraycopy(body, 0, preimage, 1, body.length);
+            }
+            return Secp256k1.address(Secp256k1.recover(Keccak.hash256(preimage), r, s, recId)) + "  (recovered from signature)";
+        } catch (RuntimeException e) {
+            return "(not recoverable: " + e.getMessage() + ")";
+        }
+    }
+
+    /** EIP-7702 authority: signs keccak(0x05 || rlp([chainId, address, nonce])). */
+    private static String recoverAuthority(List<Item> auth) {
+        try {
+            byte[] body = encode(new Item(null, auth.subList(0, 3)));
+            byte[] preimage = new byte[body.length + 1];
+            preimage[0] = 0x05;
+            System.arraycopy(body, 0, preimage, 1, body.length);
+            return Secp256k1.address(Secp256k1.recover(Keccak.hash256(preimage),
+                    auth.get(4).uint(), auth.get(5).uint(), auth.get(3).uint().intValueExact()));
+        } catch (RuntimeException e) {
+            return "(not recoverable)";
+        }
+    }
+
     private static void renderAccessList(Item item, List<String> lines) {
         if (!item.isList()) {
             lines.add("accessList: (unexpected bytes)");
@@ -270,7 +363,7 @@ final class Rlp {
             // [chainId, address, nonce, yParity, r, s]
             if (auth.isList() && auth.list.size() == 6 && auth.list.stream().noneMatch(Item::isList)) {
                 lines.add("  chainId=" + auth.list.get(0).uint() + " address=" + auth.list.get(1).hex()
-                        + " nonce=" + auth.list.get(2).uint());
+                        + " nonce=" + auth.list.get(2).uint() + " authority=" + recoverAuthority(auth.list));
             } else {
                 lines.add("  " + describeOpaque(auth));
             }

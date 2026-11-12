@@ -34,9 +34,11 @@ legacy and typed (EIP-2930, 1559, 4844, 7702) transactions: chain id, nonce,
 gas fields in gwei, `to`, `value`, access list, blob hashes or set-code
 authorizations, signature values, and the calldata decoded through the same
 ABI path. The history note shows the decoded function and target, e.g.
-`eth_sendRawTransaction transfer → 0x3535…3535`. Sender recovery from the
-signature is not implemented (it needs secp256k1); the `from` address is
-therefore not shown.
+`eth_sendRawTransaction transfer → 0x3535…3535`. The sender is recovered
+from the signature with a built-in secp256k1 (verification only, no key
+material) and shown as `from: 0x…  (recovered from signature)`; EIP-7702
+authorizations show their recovered `authority` too. A transaction whose
+signature does not verify shows `from: (not recoverable: …)`.
 
 **Signatures.** [selectors.txt](src/main/resources/selectors.txt) bundles
 common ERC-20/721/1155, proxy, multicall, Uniswap, Permit2, Safe, and

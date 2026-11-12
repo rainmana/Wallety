@@ -2,16 +2,22 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RlpTest {
     private static final Map<String, String> TABLE = Abi.table("");
     private static final byte[] TO = Abi.fromHex("0x3535353535353535353535353535353535353535");
+    // EIP-155 example key; its address is the vector's sender.
+    private static final BigInteger KEY = new BigInteger("4646464646464646464646464646464646464646464646464646464646464646", 16);
+    private static final String SENDER = "0x9d8a62f656a8d1615c1294fd71e9cfb3e4855a4f";
 
     @Test
     void decodesTheEip155SpecificationVector() {
@@ -23,6 +29,7 @@ class RlpTest {
         assertEquals("(value transfer) → 0x3535…3535", tx.label);
         assertEquals(List.of(
                 "raw:      110 bytes, legacy",
+                "from:     " + SENDER + "  (recovered from signature)",
                 "nonce:    9",
                 "gasPrice: 20000000000  (20 gwei)",
                 "gasLimit: 21000",
@@ -38,17 +45,21 @@ class RlpTest {
     void decodesAnEip1559TransactionWithCalldataAndAccessList() {
         byte[] calldata = Abi.fromHex("0xa9059cbb000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045"
                 + "0000000000000000000000000000000000000000000000000000000000000001");
-        byte[] payload = list(
+        byte[] unsigned = list(
                 uint(1), uint(42), uint(1_000_000_000L), uint(30_000_000_000L), uint(60_000),
                 bytes(TO), uint(0), bytes(calldata),
-                list(list(bytes(TO), list(bytes(new byte[32]), bytes(new byte[32])))),
-                uint(1), bytes(new byte[]{0x11}), bytes(new byte[]{0x22}));
-        byte[] raw = concat(new byte[]{0x02}, payload);
+                list(list(bytes(TO), list(bytes(new byte[32]), bytes(new byte[32])))));
+        byte[] raw = signed(0x02, unsigned, KEY);
 
         Rlp.Described tx = Rlp.describeTransaction(raw, TABLE);
         assertEquals("transfer → 0x3535…3535", tx.label);
+        List<String> lines = new ArrayList<>(tx.lines);
+        assertTrue(lines.remove(11).matches("yParity:  [01]"));
+        assertTrue(lines.remove(11).startsWith("r:        0x"));
+        assertTrue(lines.remove(11).startsWith("s:        0x"));
         assertEquals(List.of(
                 "raw:      " + raw.length + " bytes, EIP-1559 (type 2)",
+                "from:     " + SENDER + "  (recovered from signature)",
                 "chainId:  1",
                 "nonce:    42",
                 "maxPriorityFeePerGas: 1000000000  (1 gwei)",
@@ -58,12 +69,9 @@ class RlpTest {
                 "value:    0  (0 wei = 0 ether)",
                 "accessList: 1 entries",
                 "  0x3535353535353535353535353535353535353535  2 storage keys",
-                "yParity:  1",
-                "r:        0x11",
-                "s:        0x22",
                 "selector 0xa9059cbb  transfer(address,uint256)",
                 "  [0] address  0xd8da6bf26964af9d7eed9e03e53415d37aa96045",
-                "  [1] uint256  1"), tx.lines);
+                "  [1] uint256  1"), lines);
     }
 
     @Test
@@ -76,14 +84,17 @@ class RlpTest {
         assertTrue(tx.lines.contains("to:       (contract creation)"));
         assertTrue(tx.lines.contains("initcode: 2 bytes"));
 
+        byte[] authorization = signed(0x05, list(uint(1), bytes(TO), uint(3)), KEY);
         byte[] setCode = concat(new byte[]{0x04}, list(
                 uint(1), uint(7), uint(1), uint(1), uint(1), bytes(TO), uint(0), bytes(new byte[0]), list(),
-                list(list(uint(1), bytes(TO), uint(3), uint(0), uint(1), uint(1))),
+                list(java.util.Arrays.copyOfRange(authorization, 1, authorization.length)),
                 uint(0), uint(1), uint(1)));
         Rlp.Described auth = Rlp.describeTransaction(setCode, TABLE);
         assertEquals("(value transfer) → 0x3535…3535", auth.label);
+        // r = s = 1 with yParity 0 is a valid signature for some key, so a sender is still recovered.
+        assertTrue(auth.lines.get(1).startsWith("from:     0x"), auth.lines.get(1));
         assertTrue(auth.lines.contains("authorizationList: 1 entries"));
-        assertTrue(auth.lines.contains("  chainId=1 address=0x3535353535353535353535353535353535353535 nonce=3"));
+        assertTrue(auth.lines.contains("  chainId=1 address=0x3535353535353535353535353535353535353535 nonce=3 authority=" + SENDER));
     }
 
     @Test
@@ -106,6 +117,55 @@ class RlpTest {
         assertThrows(IllegalArgumentException.class, () -> Rlp.decode(new byte[]{0x01, 0x02}));
         assertEquals(BigInteger.ZERO, Rlp.decode(new byte[]{(byte) 0x80}).uint());
         assertEquals(List.of(), Rlp.decode(new byte[]{(byte) 0xc0}).list);
+    }
+
+    @Test
+    void secp256k1RecoversAndRejects() {
+        assertEquals(SENDER, Secp256k1.address(concat(
+                Secp256k1.pad32(Secp256k1.mul(Secp256k1.G, KEY)[0]), Secp256k1.pad32(Secp256k1.mul(Secp256k1.G, KEY)[1]))));
+        byte[] hash = Keccak.hash256("hello");
+        BigInteger[] sig = sign(hash, KEY);
+        assertEquals(SENDER, Secp256k1.address(Secp256k1.recover(hash, sig[0], sig[1], sig[2].intValue())));
+        assertNotEquals(SENDER, Secp256k1.address(Secp256k1.recover(hash, sig[0], sig[1], 1 - sig[2].intValue())));
+        assertThrows(IllegalArgumentException.class, () -> Secp256k1.recover(hash, sig[0], sig[1], 2));
+        assertThrows(IllegalArgumentException.class, () -> Secp256k1.recover(hash, Secp256k1.N, sig[1], 0));
+        assertThrows(IllegalArgumentException.class, () -> Secp256k1.recover(hash, sig[0], BigInteger.ZERO, 0));
+        assertThrows(IllegalArgumentException.class, () -> Secp256k1.recover(new byte[31], sig[0], sig[1], 0));
+        // Round trip of the encoder against the decoder.
+        byte[] raw = Abi.fromHex("0xf86c098504a817c800825208943535353535353535353535353535353535353535880de0b6b3a764000080");
+        assertThrows(IllegalArgumentException.class, () -> Rlp.decode(raw));  // truncated list header
+        byte[] whole = list(uint(9), uint(20_000_000_000L), uint(21000), bytes(TO), uint(1_000_000_000_000_000_000L), bytes(new byte[0]));
+        assertArrayEquals(whole, Rlp.encode(Rlp.decode(whole)));
+        assertArrayEquals(bytes(new byte[60]), Rlp.encode(Rlp.decode(bytes(new byte[60]))));
+    }
+
+    // --- test-side signer and minimal RLP encoder ---------------------------
+
+    /** Typed payload (0x02 tx, 0x05 authorization) signed over keccak(type || unsignedList). */
+    private static byte[] signed(int type, byte[] unsignedList, BigInteger key) {
+        BigInteger[] sig = sign(Keccak.hash256(concat(new byte[]{(byte) type}, unsignedList)), key);
+        // Re-open the list and append yParity, r, s.
+        Rlp.Item fields = Rlp.decode(unsignedList);
+        List<Rlp.Item> all = new ArrayList<>(fields.list);
+        all.add(Rlp.uint(sig[2]));
+        all.add(Rlp.uint(sig[0]));
+        all.add(Rlp.uint(sig[1]));
+        return concat(new byte[]{(byte) type}, Rlp.encode(new Rlp.Item(null, all)));
+    }
+
+    /** Deterministic low-s ECDSA; returns {r, s, recId}. Test-only: fixed nonce. */
+    private static BigInteger[] sign(byte[] hash, BigInteger key) {
+        BigInteger k = new BigInteger(1, Keccak.hash256(hash)).mod(Secp256k1.N);
+        BigInteger[] point = Secp256k1.mul(Secp256k1.G, k);
+        BigInteger r = point[0].mod(Secp256k1.N);
+        BigInteger z = new BigInteger(1, hash);
+        BigInteger s = k.modInverse(Secp256k1.N).multiply(z.add(r.multiply(key))).mod(Secp256k1.N);
+        int recId = point[1].testBit(0) ? 1 : 0;
+        if (s.compareTo(Secp256k1.N.shiftRight(1)) > 0) {
+            s = Secp256k1.N.subtract(s);
+            recId ^= 1;
+        }
+        return new BigInteger[]{r, s, BigInteger.valueOf(recId)};
     }
 
     // --- minimal RLP encoder for test fixtures ------------------------------

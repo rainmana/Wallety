@@ -196,6 +196,70 @@ final class Web3Summary {
         return out.toString();
     }
 
+    /**
+     * Short result text to append to the history note once the response arrives,
+     * e.g. "1000", "0xabcd…ef01", "error: execution reverted \"Insufficient balance\"".
+     * Null when there is nothing worth saying (not JSON-RPC, or a batch without errors).
+     */
+    static String resultNote(String requestBody, String responseBody, Map<String, String> selectors) {
+        List<JsonNode> responses = rpcNodes(responseBody);
+        if (responses.isEmpty()) {
+            return null;
+        }
+        if (responses.size() > 1) {
+            long errors = responses.stream().filter(r -> r.has("error")).count();
+            return errors == 0 ? null : errors + " of " + responses.size() + " failed";
+        }
+        JsonNode response = responses.get(0);
+        JsonNode request = null;
+        for (JsonNode rpc : rpcNodes(requestBody)) {
+            if (String.valueOf(rpc.get("id")).equals(String.valueOf(response.get("id")))) {
+                request = rpc;
+            }
+        }
+        String method = request == null ? "" : request.path("method").asText("");
+        String text;
+        if (response.has("error")) {
+            JsonNode error = response.get("error");
+            text = "error: " + error.path("message").asText(error.path("code").asText("?"));
+            if (error.path("data").isTextual() && error.path("data").asText().startsWith("0x08c379a0")) {
+                List<String> lines = Abi.describeCalldata(error.path("data").asText(), selectors);
+                if (lines.size() > 1 && lines.get(1).startsWith("  [0] string  ")) {
+                    text += " " + lines.get(1).substring("  [0] string  ".length());
+                }
+            }
+        } else if (method.equals("eth_call") && response.path("result").isTextual()) {
+            List<String> lines = Abi.describeReturn(response.path("result").asText(), requestSignature(request, selectors));
+            if (lines.get(0).startsWith("returns ")) {
+                // Top-level values only: "  [i] type  value"; nested lines are indented deeper.
+                StringBuilder sb = new StringBuilder();
+                for (String line : lines) {
+                    if (line.startsWith("  [") && !line.startsWith("   ")) {
+                        sb.append(sb.length() == 0 ? "" : ", ").append(line.substring(line.indexOf("  ", 3) + 2));
+                    }
+                }
+                text = sb.toString();
+            } else {
+                text = lines.get(0).startsWith("result: ") ? lines.get(0).substring("result: ".length()) : lines.get(0);
+                text = text.replaceAll("  \\(.*", "");  // drop the hint; the tab has it
+            }
+        } else {
+            JsonNode result = response.path("result");
+            String hex = result.asText("");
+            if (result.isTextual() && hex.matches("0x[0-9a-fA-F]{1,64}") && hex.length() < 50 && !method.endsWith("Hash")) {
+                text = new BigInteger(hex.substring(2), 16).toString();
+                if (method.equals("eth_getBalance")) {
+                    text += " " + formatWei(hex);
+                }
+            } else if (result.isTextual() && hex.startsWith("0x")) {
+                text = shorten(hex);
+            } else {
+                text = result.toString();
+            }
+        }
+        return text.length() > 80 ? text.substring(0, 79) + "…" : text;
+    }
+
     private static List<JsonNode> rpcNodes(String body) {
         List<JsonNode> rpcs = new ArrayList<>();
         if (body == null || !body.contains("\"jsonrpc\"")) {

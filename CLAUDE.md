@@ -7,7 +7,7 @@ Wallety is a Burp Suite extension (Montoya API) that decodes Ethereum JSON-RPC t
 ## Architecture
 
 - **Main Entry Point**: `src/main/java/Extension.java` - `BurpExtension` + `HttpHandler`; registers the settings panel, the "Web3" request and response editor tabs, and no-op tamper hooks
-- `src/main/java/Web3Summary.java` - JSON-RPC body -> history note, highlight, and detail text; response body + request body -> response detail (pure, testable)
+- `src/main/java/Web3Summary.java` - JSON-RPC body -> history note, highlight, and detail text; response body + request body -> response detail and the short result appended to the note (pure, testable)
 - `src/main/java/Abi.java` - selector table (bundled `src/main/resources/selectors.txt` + user setting, `name(args)(returns)` format) and ABI calldata/return decoder
 - `src/main/java/Keccak.java` - Keccak-256 (the JDK only has SHA3-256, which pads differently)
 - `src/main/java/Rlp.java` - RLP decode/encode and signed-transaction layouts (legacy, types 1-4), sender recovery

@@ -82,6 +82,36 @@ class ResponseTest {
         assertNull(Web3Summary.describeResponse(requests, "[]", TABLE));
     }
 
+    @Test
+    void summarizesResultsForTheHistoryNote() {
+        String call = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"to\":\"0xabc\",\"data\":\"0x70a08231" + ADDR + "\"}]}";
+        assertEquals("42", Web3Summary.resultNote(call, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x" + word(42) + "\"}", TABLE));
+        String reserves = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"to\":\"0xabc\",\"data\":\"0x" + Keccak.selector("getReserves()") + "\"}]}";
+        assertEquals("5, 7, 9", Web3Summary.resultNote(reserves,
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x" + word(5) + word(7) + word(9) + "\"}", TABLE));
+        String unknown = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_call\",\"params\":[{\"to\":\"0xabc\",\"data\":\"0xdeadbeef\"}]}";
+        assertEquals("32 bytes", Web3Summary.resultNote(unknown, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x" + word(1) + "\"}", TABLE));
+        assertEquals("empty", Web3Summary.resultNote(call, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x\"}", TABLE));
+
+        String revert = "0x08c379a0" + word(0x20) + word(5) + "68656c6c6f" + "0".repeat(54);
+        assertEquals("error: execution reverted \"hello\"", Web3Summary.resultNote(call,
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":3,\"message\":\"execution reverted\",\"data\":\"" + revert + "\"}}", TABLE));
+        assertEquals("error: -32000", Web3Summary.resultNote(call, "{\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32000}}", TABLE));
+
+        String balance = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"eth_getBalance\",\"params\":[\"0xabc\",\"latest\"]}";
+        assertEquals("1000000000000000000 (1000000000000000000 wei = 1 ether)",
+                Web3Summary.resultNote(balance, "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0xde0b6b3a7640000\"}", TABLE));
+        String send = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"eth_sendRawTransaction\",\"params\":[\"0x02\"]}";
+        assertEquals("0xabab…abab", Web3Summary.resultNote(send, "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":\"0x" + "ab".repeat(32) + "\"}", TABLE));
+        assertEquals("16", Web3Summary.resultNote(null, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x10\"}", TABLE));
+        assertEquals("null", Web3Summary.resultNote(null, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":null}", TABLE));
+        assertEquals("1 of 2 failed", Web3Summary.resultNote(null,
+                "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":1}}]", TABLE));
+        assertNull(Web3Summary.resultNote(null, "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0x2\"}]", TABLE));
+        assertNull(Web3Summary.resultNote(call, "<html>", TABLE));
+        assertNull(Web3Summary.resultNote(call, null, TABLE));
+    }
+
     private static String word(int value) {
         return String.format("%064x", value);
     }

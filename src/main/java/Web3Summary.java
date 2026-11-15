@@ -20,6 +20,12 @@ final class Web3Summary {
             "eth_sendTransaction", "eth_sendRawTransaction", "eth_sign", "personal_sign",
             "eth_signTransaction", "eth_signTypedData", "eth_signTypedData_v3", "eth_signTypedData_v4",
             "wallet_sendCalls", "eth_sendBundle");
+    /** Methods whose hex result is a number, not data or a hash. */
+    private static final Set<String> QUANTITY_METHODS = Set.of(
+            "eth_blockNumber", "eth_chainId", "eth_gasPrice", "eth_maxPriorityFeePerGas", "eth_blobBaseFee",
+            "eth_estimateGas", "eth_getBalance", "eth_getTransactionCount",
+            "eth_getBlockTransactionCountByHash", "eth_getBlockTransactionCountByNumber",
+            "eth_getUncleCountByBlockHash", "eth_getUncleCountByBlockNumber");
     private static final int MAX_NOTE = 200;
     private static final int MAX_PARAMS_PREVIEW = 4000;
     private static final BigDecimal WEI_PER_ETHER = new BigDecimal("1000000000000000000");
@@ -181,7 +187,7 @@ final class Web3Summary {
                 }
                 out.append("  result: ").append(result);
                 String text = response.path("result").asText("");
-                if (text.matches("0x[0-9a-fA-F]{1,64}") && !method.endsWith("Hash") && text.length() < 50) {
+                if (QUANTITY_METHODS.contains(method) && text.matches("0x[0-9a-fA-F]{1,64}")) {
                     out.append("  = ").append(new BigInteger(text.substring(2), 16));
                     if (method.equals("eth_getBalance")) {
                         out.append("  ").append(formatWei(text));
@@ -230,7 +236,10 @@ final class Web3Summary {
             }
         } else if (method.equals("eth_call") && response.path("result").isTextual()) {
             List<String> lines = Abi.describeReturn(response.path("result").asText(), requestSignature(request, selectors));
-            if (lines.get(0).startsWith("returns ")) {
+            String failure = lines.stream().filter(l -> l.startsWith("  (result does not decode")).findFirst().orElse(null);
+            if (failure != null) {
+                text = failure.strip();
+            } else if (lines.get(0).startsWith("returns ")) {
                 // Top-level values only: "  [i] type  value"; nested lines are indented deeper.
                 StringBuilder sb = new StringBuilder();
                 for (String line : lines) {
@@ -246,7 +255,7 @@ final class Web3Summary {
         } else {
             JsonNode result = response.path("result");
             String hex = result.asText("");
-            if (result.isTextual() && hex.matches("0x[0-9a-fA-F]{1,64}") && hex.length() < 50 && !method.endsWith("Hash")) {
+            if (QUANTITY_METHODS.contains(method) && hex.matches("0x[0-9a-fA-F]{1,64}")) {
                 text = new BigInteger(hex.substring(2), 16).toString();
                 if (method.equals("eth_getBalance")) {
                     text += " " + formatWei(hex);

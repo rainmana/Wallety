@@ -103,7 +103,20 @@ class ResponseTest {
                 Web3Summary.resultNote(balance, "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":\"0xde0b6b3a7640000\"}", TABLE));
         String send = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"eth_sendRawTransaction\",\"params\":[\"0x02\"]}";
         assertEquals("0xabab…abab", Web3Summary.resultNote(send, "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":\"0x" + "ab".repeat(32) + "\"}", TABLE));
-        assertEquals("16", Web3Summary.resultNote(null, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x10\"}", TABLE));
+        String block = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"eth_blockNumber\"}";
+        assertEquals("16", Web3Summary.resultNote(block, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x10\"}", TABLE));
+        // Hex that is data, not a quantity, stays hex.
+        assertEquals("0x10", Web3Summary.resultNote(null, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x10\"}", TABLE));
+        String code = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"eth_getCode\",\"params\":[\"0xabc\",\"latest\"]}";
+        assertEquals("0x60006000", Web3Summary.resultNote(code, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0x60006000\"}", TABLE));
+        String coinbase = "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"eth_coinbase\"}";
+        assertEquals("0xd8da…6045", Web3Summary.resultNote(coinbase,
+                "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":\"0xd8da6bf26964af9d7eed9e03e53415d37aa96045\"}", TABLE));
+        // Partial or failed ABI decoding is reported, not shown as success.
+        assertEquals("(result does not decode as (uint256))",
+                Web3Summary.resultNote(call, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x01\"}", TABLE));
+        assertEquals("(result does not decode as (uint112,uint112,uint32))",
+                Web3Summary.resultNote(reserves, "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x" + word(5) + "\"}", TABLE));
         assertEquals("null", Web3Summary.resultNote(null, "{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":null}", TABLE));
         assertEquals("1 of 2 failed", Web3Summary.resultNote(null,
                 "[{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":1}}]", TABLE));

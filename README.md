@@ -13,7 +13,9 @@ the Proxy history, e.g. `eth_call transfer → 0x1234…5678` or
 `batch[4]: eth_call eth_blockNumberx3`. Requests that send or sign
 (`eth_sendRawTransaction`, `eth_sendTransaction`, `personal_sign`,
 `eth_signTypedData_v4`, ...) are highlighted orange. Existing user notes and
-highlights are never overwritten.
+highlights are never overwritten. When the response arrives, the note gains
+the result: `eth_call balanceOf → 0x1234…5678  = 1000`, a transaction hash,
+a balance in wei and ether, or `error: execution reverted "reason"`.
 
 **Web3 editor tab.** Any request whose body is a JSON-RPC 2.0 request or batch
 gets a read-only "Web3" tab in the message editor showing method, id, `to`,

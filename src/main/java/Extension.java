@@ -149,6 +149,21 @@ public class Extension implements BurpExtension, HttpHandler {
 
     @Override
     public ResponseReceivedAction handleHttpResponseReceived(HttpResponseReceived response) {
+        try {
+            Annotations annotations = response.annotations();
+            String requestBody = bodyText(response.initiatingRequest());
+            Web3Summary summary = requestBody == null ? null : Web3Summary.describe(requestBody, selectors());
+            // Only extend the note this extension wrote at request time; never touch a user's own.
+            if (summary != null && annotations.hasNotes() && summary.note.equals(annotations.notes())) {
+                String result = Web3Summary.resultNote(requestBody, bodyText(response), selectors());
+                if (result != null) {
+                    return ResponseReceivedAction.continueWith(response,
+                            annotations.withNotes(summary.note + "  = " + result));
+                }
+            }
+        } catch (RuntimeException exception) {
+            logFailure("response_annotation", exception);
+        }
         return ResponseReceivedAction.continueWith(response);
     }
 
